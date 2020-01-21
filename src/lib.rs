@@ -36,7 +36,7 @@ trait WakeRef {
 
 impl<M: RawMutex, K: Eq + Hash + Clone> WakeRef for SetWakerInstance<M, K> {
     fn wake(&self) {
-        self.handle.lock().wake(self.key.clone())
+        self.handle.lock().wake(&self.key)
     }
 }
 
@@ -72,9 +72,11 @@ impl<M: RawMutex, K: Eq + Hash + Clone + 'static> SetWaker<M, K> {
     }
 }
 
-impl<K: Eq + Hash> SetWakerInner<K> {
-    fn wake(&mut self, key: K) {
-        self.wakeups.insert(key);
+impl<K: Eq + Hash + Clone> SetWakerInner<K> {
+    fn wake(&mut self, key: &K) {
+        if !self.wakeups.contains(key) {
+            self.wakeups.insert(key.clone());
+        }
         self.waker.wake();
     }
 }
