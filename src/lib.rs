@@ -3,7 +3,7 @@ use std::{
     hash::Hash,
     mem::swap,
     sync::{Arc, Mutex},
-    task::{RawWaker, RawWakerVTable, Waker},
+    task::{Context, RawWaker, RawWakerVTable, Waker},
 };
 
 pub struct SetWaker<K> {
@@ -11,7 +11,8 @@ pub struct SetWaker<K> {
 }
 
 struct SetWakerInner<K> {
-    wake: HashSet<K>,
+    wakeups: HashSet<K>,
+    waker: Waker,
 }
 
 struct SetWakerInstance<K> {
@@ -30,10 +31,11 @@ impl<K: Eq + Hash + Clone> WakeRef for SetWakerInstance<K> {
 }
 
 impl<K: Eq + Hash + Clone + 'static> SetWaker<K> {
-    pub fn new() -> Self {
+    pub fn new(ctx: &Context) -> Self {
         SetWaker {
             inner: Arc::new(Mutex::new(SetWakerInner {
-                wake: HashSet::new(),
+                wakeups: HashSet::new(),
+                waker: ctx.waker().clone(),
             })),
         }
     }
@@ -45,7 +47,7 @@ impl<K: Eq + Hash + Clone + 'static> SetWaker<K> {
         unsafe { Waker::from_raw(RawWaker::new(Arc::into_raw(waker) as *const _, VTABLE)) }
     }
     pub fn keys(&self) -> impl Iterator<Item = K> {
-        let map = &mut self.inner.lock().unwrap().wake;
+        let map = &mut self.inner.lock().unwrap().wakeups;
         let mut set = HashSet::new();
         swap(map, &mut set);
         set.into_iter()
@@ -54,7 +56,8 @@ impl<K: Eq + Hash + Clone + 'static> SetWaker<K> {
 
 impl<K: Eq + Hash> SetWakerInner<K> {
     fn wake(&mut self, key: K) {
-        self.wake.insert(key);
+        self.wakeups.insert(key);
+        self.waker.wake_by_ref();
     }
 }
 
