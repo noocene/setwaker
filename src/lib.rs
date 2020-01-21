@@ -1,9 +1,10 @@
+use futures::task::AtomicWaker;
 use std::{
     collections::HashSet,
     hash::Hash,
     mem::swap,
     sync::{Arc, Mutex},
-    task::{Context, RawWaker, RawWakerVTable, Waker},
+    task::{RawWaker, RawWakerVTable, Waker},
 };
 
 pub struct SetWaker<K> {
@@ -12,7 +13,7 @@ pub struct SetWaker<K> {
 
 struct SetWakerInner<K> {
     wakeups: HashSet<K>,
-    waker: Waker,
+    waker: AtomicWaker,
 }
 
 struct SetWakerInstance<K> {
@@ -31,13 +32,16 @@ impl<K: Eq + Hash + Clone> WakeRef for SetWakerInstance<K> {
 }
 
 impl<K: Eq + Hash + Clone + 'static> SetWaker<K> {
-    pub fn new(ctx: &Context) -> Self {
+    pub fn new() -> Self {
         SetWaker {
             inner: Arc::new(Mutex::new(SetWakerInner {
                 wakeups: HashSet::new(),
-                waker: ctx.waker().clone(),
+                waker: AtomicWaker::new(),
             })),
         }
+    }
+    pub fn register(&self, waker: &Waker) {
+        self.inner.lock().unwrap().waker.register(waker)
     }
     pub fn with_key(&self, key: K) -> Waker {
         let waker: InstancePointer = Arc::new(Mutex::new(Box::new(SetWakerInstance {
@@ -57,7 +61,7 @@ impl<K: Eq + Hash + Clone + 'static> SetWaker<K> {
 impl<K: Eq + Hash> SetWakerInner<K> {
     fn wake(&mut self, key: K) {
         self.wakeups.insert(key);
-        self.waker.wake_by_ref();
+        self.waker.wake();
     }
 }
 
