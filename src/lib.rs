@@ -1,14 +1,23 @@
-use futures::task::AtomicWaker;
-use std::{
-    collections::HashSet,
+#![cfg_attr(not(feature = "std"), no_std)]
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, sync::Arc};
+use core::{
     hash::Hash,
     mem::swap,
-    sync::{Arc, Mutex},
     task::{RawWaker, RawWakerVTable, Waker},
 };
+use futures::task::AtomicWaker;
+#[cfg(not(feature = "std"))]
+use hashbrown::HashSet;
+use lock_api::{Mutex, RawMutex};
+#[cfg(feature = "std")]
+use std::{collections::HashSet, sync::Arc};
 
-pub struct SetWaker<K> {
-    inner: WakerPointer<K>,
+pub struct SetWaker<M: RawMutex, K> {
+    inner: WakerPointer<M, K>,
 }
 
 struct SetWakerInner<K> {
@@ -16,8 +25,8 @@ struct SetWakerInner<K> {
     waker: AtomicWaker,
 }
 
-struct SetWakerInstance<K> {
-    handle: WakerPointer<K>,
+struct SetWakerInstance<M: RawMutex, K> {
+    handle: WakerPointer<M, K>,
     key: K,
 }
 
@@ -25,13 +34,13 @@ trait WakeRef {
     fn wake(&self);
 }
 
-impl<K: Eq + Hash + Clone> WakeRef for SetWakerInstance<K> {
+impl<M: RawMutex, K: Eq + Hash + Clone> WakeRef for SetWakerInstance<M, K> {
     fn wake(&self) {
-        self.handle.lock().unwrap().wake(self.key.clone())
+        self.handle.lock().wake(self.key.clone())
     }
 }
 
-impl<K: Eq + Hash + Clone + 'static> SetWaker<K> {
+impl<M: RawMutex, K: Eq + Hash + Clone + 'static> SetWaker<M, K> {
     pub fn new() -> Self {
         SetWaker {
             inner: Arc::new(Mutex::new(SetWakerInner {
@@ -41,17 +50,22 @@ impl<K: Eq + Hash + Clone + 'static> SetWaker<K> {
         }
     }
     pub fn register(&self, waker: &Waker) {
-        self.inner.lock().unwrap().waker.register(waker)
+        self.inner.lock().waker.register(waker)
     }
     pub fn with_key(&self, key: K) -> Waker {
-        let waker: InstancePointer = Arc::new(Mutex::new(Box::new(SetWakerInstance {
+        let waker: Arc<Box<dyn WakeRef>> = Arc::new(Box::new(SetWakerInstance {
             handle: self.inner.clone(),
             key,
-        })));
-        unsafe { Waker::from_raw(RawWaker::new(Arc::into_raw(waker) as *const _, VTABLE)) }
+        }));
+        unsafe {
+            Waker::from_raw(RawWaker::new(
+                Arc::<Box<dyn WakeRef>>::into_raw(waker) as *const _,
+                VTABLE,
+            ))
+        }
     }
     pub fn keys(&self) -> impl Iterator<Item = K> {
-        let map = &mut self.inner.lock().unwrap().wakeups;
+        let map = &mut self.inner.lock().wakeups;
         let mut set = HashSet::new();
         swap(map, &mut set);
         set.into_iter()
@@ -65,25 +79,24 @@ impl<K: Eq + Hash> SetWakerInner<K> {
     }
 }
 
-type WakerPointer<K> = Arc<Mutex<SetWakerInner<K>>>;
-type InstancePointer = Arc<Mutex<Box<dyn WakeRef>>>;
+type WakerPointer<M, K> = Arc<Mutex<M, SetWakerInner<K>>>;
 
 static VTABLE: &'static RawWakerVTable = {
     fn clone(data: *const ()) -> RawWaker {
-        let waker: InstancePointer = unsafe { Arc::from_raw(data as *const _) };
+        let waker: Arc<Box<dyn WakeRef>> = unsafe { Arc::from_raw(data as *const _) };
         RawWaker::new(Arc::into_raw(waker.clone()) as *const _, VTABLE)
     }
     fn wake(data: *const ()) {
-        let waker: InstancePointer = unsafe { Arc::from_raw(data as *const _) };
-        waker.lock().unwrap().wake();
+        let waker: Arc<Box<dyn WakeRef>> = unsafe { Arc::from_raw(data as *const _) };
+        waker.wake();
     }
     fn wake_by_ref(data: *const ()) {
-        let waker: InstancePointer = unsafe { Arc::from_raw(data as *const _) };
-        waker.lock().unwrap().wake();
+        let waker: Arc<Box<dyn WakeRef>> = unsafe { Arc::from_raw(data as *const _) };
+        waker.wake();
         Arc::into_raw(waker);
     }
     fn drop(data: *const ()) {
-        unsafe { Arc::from_raw(data as *const _) };
+        unsafe { Arc::<Box<dyn WakeRef>>::from_raw(data as *const _) };
     }
     &RawWakerVTable::new(clone, wake, wake_by_ref, drop)
 };
