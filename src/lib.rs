@@ -3,7 +3,7 @@
 extern crate alloc;
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, sync::Arc};
+use alloc::sync::Arc;
 use core::{
     hash::Hash,
     mem::swap,
@@ -30,16 +30,6 @@ struct SetWakerInstance<M: RawMutex, K> {
     key: K,
 }
 
-trait WakeRef {
-    fn wake(&self);
-}
-
-impl<M: RawMutex, K: Eq + Hash + Clone> WakeRef for SetWakerInstance<M, K> {
-    fn wake(&self) {
-        self.handle.lock().wake(&self.key)
-    }
-}
-
 impl<M: RawMutex, K: Eq + Hash + Clone + 'static> SetWaker<M, K> {
     pub fn new() -> Self {
         SetWaker {
@@ -53,14 +43,45 @@ impl<M: RawMutex, K: Eq + Hash + Clone + 'static> SetWaker<M, K> {
         self.inner.lock().waker.register(waker)
     }
     pub fn with_key(&self, key: K) -> Waker {
-        let waker: Arc<Box<dyn WakeRef>> = Arc::new(Box::new(SetWakerInstance {
-            handle: self.inner.clone(),
-            key,
-        }));
+        let vtable = {
+            fn clone<M: RawMutex, K: Eq + Hash + Clone>(data: *const ()) -> RawWaker {
+                let waker: Arc<SetWakerInstance<M, K>> = unsafe { Arc::from_raw(data as *const _) };
+                RawWaker::new(
+                    Arc::into_raw(waker.clone()) as *const _,
+                    &RawWakerVTable::new(
+                        clone::<M, K>,
+                        wake::<M, K>,
+                        wake_by_ref::<M, K>,
+                        drop::<M, K>,
+                    ),
+                )
+            }
+            fn wake<M: RawMutex, K: Eq + Hash + Clone>(data: *const ()) {
+                let waker: Arc<SetWakerInstance<M, K>> = unsafe { Arc::from_raw(data as *const _) };
+                waker.handle.lock().wake(&waker.key);
+            }
+            fn wake_by_ref<M: RawMutex, K: Eq + Hash + Clone>(data: *const ()) {
+                let waker: Arc<SetWakerInstance<M, K>> = unsafe { Arc::from_raw(data as *const _) };
+                waker.handle.lock().wake(&waker.key);
+                Arc::into_raw(waker);
+            }
+            fn drop<M: RawMutex, K>(data: *const ()) {
+                unsafe { <Arc<SetWakerInstance<M, K>>>::from_raw(data as *const _) };
+            }
+            &RawWakerVTable::new(
+                clone::<M, K>,
+                wake::<M, K>,
+                wake_by_ref::<M, K>,
+                drop::<M, K>,
+            )
+        };
         unsafe {
             Waker::from_raw(RawWaker::new(
-                Arc::<Box<dyn WakeRef>>::into_raw(waker) as *const _,
-                VTABLE,
+                Arc::<SetWakerInstance<M, K>>::into_raw(Arc::new(SetWakerInstance {
+                    handle: self.inner.clone(),
+                    key,
+                })) as *const _,
+                vtable,
             ))
         }
     }
@@ -82,23 +103,3 @@ impl<K: Eq + Hash + Clone> SetWakerInner<K> {
 }
 
 type WakerPointer<M, K> = Arc<Mutex<M, SetWakerInner<K>>>;
-
-static VTABLE: &'static RawWakerVTable = {
-    fn clone(data: *const ()) -> RawWaker {
-        let waker: Arc<Box<dyn WakeRef>> = unsafe { Arc::from_raw(data as *const _) };
-        RawWaker::new(Arc::into_raw(waker.clone()) as *const _, VTABLE)
-    }
-    fn wake(data: *const ()) {
-        let waker: Arc<Box<dyn WakeRef>> = unsafe { Arc::from_raw(data as *const _) };
-        waker.wake();
-    }
-    fn wake_by_ref(data: *const ()) {
-        let waker: Arc<Box<dyn WakeRef>> = unsafe { Arc::from_raw(data as *const _) };
-        waker.wake();
-        Arc::into_raw(waker);
-    }
-    fn drop(data: *const ()) {
-        unsafe { Arc::<Box<dyn WakeRef>>::from_raw(data as *const _) };
-    }
-    &RawWakerVTable::new(clone, wake, wake_by_ref, drop)
-};
