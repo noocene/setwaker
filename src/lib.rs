@@ -46,7 +46,7 @@ impl<M: RawMutex, K: Eq + Hash + Clone + 'static> SetWaker<M, K> {
         let vtable = {
             fn clone<M: RawMutex, K: Eq + Hash + Clone>(data: *const ()) -> RawWaker {
                 let waker: Arc<SetWakerInstance<M, K>> = unsafe { Arc::from_raw(data as *const _) };
-                RawWaker::new(
+                let cloned = RawWaker::new(
                     Arc::into_raw(waker.clone()) as *const _,
                     &RawWakerVTable::new(
                         clone::<M, K>,
@@ -54,7 +54,9 @@ impl<M: RawMutex, K: Eq + Hash + Clone + 'static> SetWaker<M, K> {
                         wake_by_ref::<M, K>,
                         drop::<M, K>,
                     ),
-                )
+                );
+                Arc::into_raw(waker);
+                cloned
             }
             fn wake<M: RawMutex, K: Eq + Hash + Clone>(data: *const ()) {
                 let waker: Arc<SetWakerInstance<M, K>> = unsafe { Arc::from_raw(data as *const _) };
