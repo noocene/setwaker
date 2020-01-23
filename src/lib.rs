@@ -50,8 +50,10 @@ impl<M: RawMutex, K: Eq + Hash + Clone + 'static> SetWaker<M, K> {
     pub fn register(&self, waker: &Waker) {
         self.inner.lock().waker.register(waker)
     }
+    pub fn wake(&self, key: &K) {
+        self.inner.lock().wake(key);
+    }
     pub fn with_key(&self, key: K) -> Waker {
-        self.inner.lock().wakeups.insert(key.clone());
         let vtable = {
             fn clone<M: RawMutex, K: Eq + Hash + Clone>(data: *const ()) -> RawWaker {
                 let waker: Arc<SetWakerInstance<M, K>> = unsafe { Arc::from_raw(data as *const _) };
