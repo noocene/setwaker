@@ -1,8 +1,8 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-#[cfg(not(feature = "std"))]
+#![cfg_attr(feature = "no_std", no_std)]
+#[cfg(feature = "no_std")]
 extern crate alloc;
 
-#[cfg(not(feature = "std"))]
+#[cfg(feature = "no_std")]
 use alloc::sync::Arc;
 use core::{
     hash::Hash,
@@ -10,10 +10,10 @@ use core::{
     task::{RawWaker, RawWakerVTable, Waker},
 };
 use futures::task::AtomicWaker;
-#[cfg(not(feature = "std"))]
+#[cfg(feature = "no_std")]
 use hashbrown::HashSet;
 use lock_api::{Mutex, RawMutex};
-#[cfg(feature = "std")]
+#[cfg(not(feature = "no_std"))]
 use std::{collections::HashSet, sync::Arc};
 
 pub struct SetWaker<M: RawMutex, K> {
