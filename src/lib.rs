@@ -16,9 +16,16 @@ use lock_api::{Mutex, RawMutex};
 #[cfg(not(feature = "no_std"))]
 use std::{collections::HashSet, sync::Arc};
 
-#[derive(Clone)]
 pub struct SetWaker<M: RawMutex, K> {
     inner: WakerPointer<M, K>,
+}
+
+impl<M: RawMutex, K> Clone for SetWaker<M, K> {
+    fn clone(&self) -> Self {
+        SetWaker {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 struct SetWakerInner<K> {
